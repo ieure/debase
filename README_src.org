@@ -28,17 +28,102 @@
   the problem, in the form of unreadably dense, macro-heavy,
   profoundly cursed Lisp.
 
+
+** D-Bus crash course
+   :PROPERTIES:
+   :ID:       d00772f4-8bfe-4f63-8d7f-ccc43d2586f2
+   :END:
+
+   - Bus.  A bus contains services; D-Bus can manage many different
+     busses, but the two standard ones are:
+     - System bus.  This generally has hardware-interfacing and system
+       management services.
+     - Session bus.  This is private to the current session, i.e. a
+       logged-in user.
+
+   - Services.  A service exists on a bus, and is a set of information
+     and operations offered by a program.  Example: =org.bluez= on the
+     system bus is the service which manages Bluetooth.
+
+   - Objects.  An object exists within a service, and typically
+     represents a resource it manages.  Objects are identified by
+     paths; paths are namespaced under the service.  Example:
+     =/org/bluez/hci0/dev_01_23_45_67_89_AB= is the path to an object
+     representing a specific Bluetooth device.  Because this is part
+     of the service, that path doesn’t represent anything in a
+     different service, like =org.freedesktop.fwupd=.
+
+   - Interfaces.  An interface is a view into the capabilities of an
+     object.  Objects can (and almost always do) support multiple
+     interfaces.  Example: =org.bluez.Device1= is a general interface
+     for managing pairing/unpairing/connecting/disconnecting from
+     Bluetooth devices; =org.bluez.MediaControl1= is an interface for
+     media devices, such as speakers or speakerphones.  Since
+     =/org/bluez/hci0/dev_01_23_45_67_89_AB= is a media device, it
+     supports both interfaces.
+
+   - Properties.  A property is a value attached to an interface,
+     which exposes information about an object.  For example, the
+     =Name= property in the =org.bluez.Device1= interface of
+     =/org/bluez/hci0/dev_01_23_45_67_89_AB= is "Bluetooth Speaker" —
+     the name of the device.  The interface can define them as being
+     read-only, read/write, or write-only.
+
+   - Methods.  A method is a remote function call attached to an
+     interface.  For example, the =VolumeUp()= method in the
+     =org.bluez.MediaControl1= interface of object
+     =/org/bluez/hci0/dev_01_23_45_67_89_AB= in the =org.bluez=
+     service of the system bus increases the volume of "Bluetooth
+     Speaker."  Methods can take arguments and return values.
+
+
+** Debase’s abstractions
+   :PROPERTIES:
+   :ID:       a7ea0d8e-9923-4cd8-9d15-0e69158fda85
+   :END:
+
+   Debase is focused on D-Bus objects, and makes no attempt to model
+   busses or services.
+
+   Debase uses EIEIO to create proxy classes which represent D-Bus
+   interfaces.  These are generic, and reused for any object needing
+   that interface.  These all inherit from =debase--dbus=.
+
+   Proxy classes are solely concerned with interfaces, thus they have
+   no information about a specific object or what service/bus/path it
+   might exist under.
+
+   Objects inherit from =debase--dbus-object= and one or more proxy
+   classes.
+
+   Properties are represented by slots, with getters/setters, and
+   D-Bus methods are generic functions.
+
+   Do not attempt to use slot values directly; use the accessors.
+   Accessors have the form =debase-prop-NAME=, where =NAME= is a
+   sanitized version of the D-Bus property name.
+
+   Accessors are =setf=-able, if the D-Bus property can be written to.
+
+   Specific D-Bus objects are represented by instances of a wrapper class which
+   defines the bus, service, and object path, and inherits from the
+   EIEIO classes which comprise all its interfaces.
+
+
 ** Usage
    :PROPERTIES:
    :ID:       95dd1bd2-b4ed-4b0d-baef-206ea6d5a3d7
    :END:
 
-   While debase is mildly useful on its own, it’s best used as a base
-   layer for building domain-specific functionality on top of.
+   Debase is best used as a base layer for building domain-specific
+   functionality.
 
-   Debase creates one EIEIO class per D-Bus interface.  The interface
-   is discovered using reflection, by examining a particular service
-   and path on a bus.
+   Debase creates one EIEIO proxy class per D-Bus interface.  Because
+   objects have multiple interfaces, a wrapper class is created
+   per-object, which inherits from all the proxy classes for its interfaces.
+
+   Interfaces are discovered using D-Bus’ reflection mechanism.
+   Therefore, they /should not/
 
    #+BEGIN_SRC emacs-lisp :session usage-1 :eval always :exports both :results value verbatim
      (require 'debase)
