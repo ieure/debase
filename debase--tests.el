@@ -39,23 +39,53 @@
   (should (eq t (debase--property-writeable? '(property ((type . "ao") (name . "Devices") (access . "readwrite")))))))
 
 (ert-deftest debase-test--name-mangle ()
-  (should (string= "db-foo-bar" (debase--name-mangle nil "FooBar")))
-  (should (string= "foo-bar" (debase--name-mangle '(:prefix nil) "FooBar")))
-  (should (string= "msvfoo-bar" (debase--name-mangle '(:prefix "msv") "FooBar")))
-  (should (string= "msv-foo-bar" (debase--name-mangle '(:prefix "msv-") "FooBar"))))
+  (should (string= "debase-foo-bar" (debase--name-mangle "FooBar")))
+  (should (string= "foo-bar" (debase--name-mangle  "FooBar" '(:prefix nil))))
+  (should (string= "msvfoo-bar" (debase--name-mangle "FooBar" '(:prefix "msv"))))
+  (should (string= "msv-foo-bar" (debase--name-mangle "FooBar" '(:prefix "msv-")))))
+
+(ert-deftest debase-test--interface-names ()
+  (should (equal '("org.freedesktop.DBus.Properties"
+                   "org.freedesktop.DBus.Introspectable"
+                   "org.freedesktop.DBus.Peer"
+                   "org.freedesktop.UDisks2.Manager")
+                 (debase-interface-names '(node nil "\n  "
+                                                (interface ((name . "org.freedesktop.DBus.Properties")))
+                                                (interface ((name . "org.freedesktop.DBus.Introspectable")))
+                                                (interface ((name . "org.freedesktop.DBus.Peer")))
+                                                (interface ((name . "org.freedesktop.UDisks2.Manager"))))))))
+
+(ert-deftest debase-test--interface-name ()
+  (should (string= "org.freedesktop.UDisks2.Manager" (debase-interface-name '(interface ((name . "org.freedesktop.UDisks2.Manager"))))))
+  (should (string= "org.freedesktop.DBus.Peer" (debase-interface-name '(interface ((name . "org.freedesktop.DBus.Peer")))))))
+
+(ert-deftest debase-test--interface ()
+  (let ((xml '(node nil (interface
+                         ((name . "org.freedesktop.DBus.Introspectable"))
+                         (method ((name . "Introspect"))
+                                 (arg ((type . "s")
+                                       (name . "xml_data")
+                                       (direction . "out")))))
+                    (interface
+                     ((name . "org.freedesktop.DBus.Introspectable"))
+                     (method ((name . "Introspect"))
+                             (arg ((type . "s")
+                                   (name . "xml_data")
+                                   (direction . "out"))))))))
+    (should (equal 'interface (car (debase--interface xml "org.freedesktop.DBus.Introspectable"))))))
 
 (ert-deftest debase-test--interface->name ()
-  (should (string= "db-network-manager"
-                   (debase--interface->name '((interface
-                                               ((name . "org.freedesktop.NetworkManager")))))))
+  (should (string= "debase-network-manager"
+                   (debase--interface->name '(interface
+                                               ((name . "org.freedesktop.NetworkManager"))))))
 
   (should (string= "nm-network-manager"
-                   (debase--interface->name '((interface
-                                               ((name . "org.freedesktop.NetworkManager")))) '(:prefix "nm-")))))
+                   (debase--interface->name '(interface
+                                               ((name . "org.freedesktop.NetworkManager"))) '(:prefix "nm-")))))
 
 (ert-deftest debase-test--property->slotdef ()
   (should (equal
-           '(global-dns-configuration :type t :accessor db-prop-global-dns-configuration)
+           '(debase-global-dns-configuration :type t :accessor debase-prop-global-dns-configuration)
            (debase--property->slotdef '(property
                                         ((type . "a{sv}")
                                          (name . "GlobalDnsConfiguration")
