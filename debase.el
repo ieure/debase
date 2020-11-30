@@ -45,14 +45,31 @@
   (let ((actual-type (car xml?)))
     (assert (eq expected-type actual-type) "Expected type `%s', but got `%s'" expected-type actual-type)))
 
+ ;; Name mangling
+
+(defun debase-basic-mangler (dbus-name)
+  "Mangles DBUS-NAME into something Lispier.
+
+ex. FooBARQuux -> foo-bar-quux."
+  (let ((case-fold-search))
+    (downcase (replace-regexp-in-string "\\([a-z]\\)\\([A-Z]\\)" "\\1-\\2" dbus-name))))
+
+(cl-defun debase-prefix-mangler (prefix dbus-name)
+  (concat prefix dbus-name))
+
 (defun debase--name-mangle (dbus-name &optional options)
   "Mangle DBUS-NAME into something Lispier.
 
    ex. FooBARQuux -> foo-bar-quux."
-  (let ((case-fold-search)
-        (prefix (cond ((memq :prefix options) (plist-get options :prefix))
+
+  (let ((prefix (cond ((memq :prefix options) (plist-get options :prefix))
                       (t debase--prefix))))
-    (concat prefix (downcase (replace-regexp-in-string "\\([a-z]\\)\\([A-Z]\\)" "\\1-\\2" dbus-name)))))
+    (thread-last dbus-name
+      debase-basic-mangler
+      (debase-prefix-mangler prefix))))
+
+
+ ;; Interface handling
 
 (defun debase-interface-names (xml)
   "Return a list of supported D-Bus interface names in XML."
@@ -97,6 +114,8 @@
      (replace-regexp-in-string "\\." "-"))
    options))
 
+ ;; Method handling
+
 (defun debase--interface-method->arglist (method-def)
   "Return the CL argument list for METHOD-DEF."
   (debase--assert method-def 'method)
@@ -130,19 +149,21 @@
                            (cdr (assoc 'name (dom-attributes interface-def))))
           (debase--interface-methods interface-def)))
 
+ ;; Properties
+
 (defun debase--property-readable? (property-def)
-  "Is the property specified in PROPERTY-DEF writable?"
+  "Is the property specified in PROPERTY-DEF readable?"
   (debase--assert property-def 'property)
   (let ((access (cdr (assoc 'access (dom-attributes property-def)))))
-    (or (string= "read" access)
-        (string= "readwrite" access))))
+    (or (string= access "read")
+        (string= access "readwrite"))))
 
 (defun debase--property-writeable? (property-def)
   "Is the property specified in PROPERTY-DEF writeable?"
   (debase--assert property-def 'property)
   (let ((access (cdr (assoc 'access (dom-attributes property-def)))))
-    (or (string= "write" access)
-        (string= "readwrite" access))))
+    (or (string= access "write")
+        (string= access "readwrite"))))
 
 (defun debase--property->slotdef (property-def &optional options)
   "Return slot definition for property PROPERTY-DEF."
@@ -190,27 +211,30 @@ it to the CLASS-NAME class."
          (property-name (cdr (assoc 'name (dom-attributes property-def)))))
 
     ;; There's always a reader, but it might be one that just errors.
-    (push (funcall (if (debase--property-readable? property-def)
-                       'debase--property->dbus-accessor
-                     'debase--property->error-accessor)
-                   class-name
-                   interface
-                   accessor
-                   property-name)
-          slot-and-helpers)
+    (thread-first
+        (funcall (if (debase--property-readable? property-def)
+                     'debase--property->dbus-accessor
+                   'debase--property->error-accessor)
+                 class-name
+                 interface
+                 accessor
+                 property-name)
+      (push slot-and-helpers))
 
     ;; There's sometimes a writer.
     (when (debase--property-writeable? property-def)
       ;; Clear the setter, if there is one, otherwise `gv-setter' complains.
       (put accessor 'gv-expander nil)
-      (push
-       `(gv-define-setter ,accessor (val obj)
-          (backquote (with-slots (bus service path interface) ,',obj
-            (dbus-set-property bus service path interface ,property-name ,',val)
-            (oset ,',obj ,slotname ,',val))))
-       slot-and-helpers))
+      (thread-first
+          `(gv-define-setter ,accessor (val obj)
+             (backquote (with-slots (bus service path interface) ,',obj
+                          (dbus-set-property bus service path interface ,property-name ,',val)
+                          (oset ,',obj ,slotname ,',val))))
+        (push slot-and-helpers)))
 
     (reverse slot-and-helpers)))
+
+ ;; Base classes
 
 (defclass debase--dbus ()
   ((interface :type string
@@ -233,6 +257,9 @@ it to the CLASS-NAME class."
   :abstract t
   :documentation "Base class for D-Bus objects.")
 
+
+ ;; Class creation
+
 (defun debase--create-interface (interface-def &rest options)
   "Define an EIEIO class and methods for D-Bus interface INTERFACE-DEF.
 
@@ -240,7 +267,7 @@ OPTIONS is an alist supporting the following keywords:
 
   :prefix - Generated symbols will be prefixed by this string, instead of `debase-'.
   :name - The generated class will be named this."
-  (let* ((interface-name (cdr (assoc 'name (dom-attributes interface-def))))
+  (let* ((interface-name (debase-interface-name interface-def))
          (class-name (pcase (or (plist-get options :name)
                                 (debase--interface->name interface-def options))
                        ((and s (pred symbolp)) s)
@@ -266,8 +293,6 @@ OPTIONS is an alist supporting the following keywords:
        ;; Slot helpers -- getters and setf support.
        ,@(apply #'append (mapcar #'cdr slots-and-helpers)))))
 
-
-
 (defun debase--object-interfaces (xml &optional interfaces)
   "Return D-Bus interface definitions INTERFACES from XML.
 
@@ -291,7 +316,7 @@ If INTERFACES is a list of strings, return interfaces matching them.
 
            collect (debase--interface xml interface)))
 
-(defun debase-define-class* (class-name bus service path &rest options)
+(defun debase-define-composite-class* (class-name bus service path &rest options)
   "Create a class representing D-Bus SERVICE, on BUS, at PATH."
   (let* ((interfaces (debase--object-interfaces (dbus-introspect-xml bus service path)
                                                 (plist-get options :interfaces)))
@@ -310,8 +335,14 @@ If INTERFACES is a list of strings, return interfaces matching them.
                               "Debase composite class, representing an object with the following interfaces:\n\n - "
                               (string-join interface-names "\n - "))))))
 
-(defun debase-define-class (class-name bus service path &rest options)
+(defun debase-define-composite-class (class-name bus service path &rest options)
   (eval (apply #'debase-define-class* class-name bus service path options)))
+
+(defun debase-define-simple-class* (class-name bus service path interface &rest options)
+  "Create a class representing D-Bus SERVICE, on BUS, at PATH."
+  (apply #'debase--create-interface
+         (debase--interface (dbus-introspect-xml bus service path) interface)
+         options))
 
 (defun debase-make-instance (bus service path &rest options)
   "Create an instance of D-Bus SERVICE, on BUS, at PATH."
