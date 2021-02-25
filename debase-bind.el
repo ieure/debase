@@ -1,15 +1,37 @@
+;;; debase-bind.el --- Binding helpers               -*- lexical-binding: t; -*-
 
- ;; Binding helpers
+;; Copyright (C) 2021  Ian Eure
 
-
+;; Author: Ian Eure <ian@retrospec.tv>
+;; Keywords: comm, hardware
 
-(cl-defmacro debase-flet-partial* ((func &rest args) &rest body)
-  "Like FLET, but binds a partial of ARGS applied FUNC around BODY."
+;; This program is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;;
+
+;;; Code:
+
+(cl-defmacro debase-flet-partial (bindings &rest body)
+  "Like FLET, but binds ARGS partially applied to FUNC around BODY.
+
+\(fn ((FUNC ARGS) ...) BODY)"
   (declare (indent 2))
-  `(cl-flet ((,func (apply-partially #',func ,@args)))
+  `(cl-flet ,(cl-loop for (func . args) in bindings
+                      collect `(,func (apply-partially #',func ,@args)))
      ,@body))
-
-
 
 (cl-defmacro debase-bind* ((bus service path &optional interface) &rest forms)
   "Bind D-Bus functions around FORMS, targeting BUS SERVICE PATH INTERFACE
@@ -22,11 +44,11 @@ path, from this function's arguments.
   (declare (indent 2))
   (let ((oargs (list bus service path))
         (iargs `(,bus ,service ,path ,(when interface interface))))
-    `(thread-last ,@forms
-       (debase-flet-partial* (dbus-introspect-xml ,@oargs))
-       (debase-flet-partial* (dbus-get-property ,@iargs))
-       (debase-flet-partial* (dbus-set-property ,@iargs))
-       (debase-flet-partial* (dbus-call-method ,@iargs)))))
+    `(debase-flet-partial ((dbus-introspect-xml ,@oargs)
+                           (dbus-get-property ,@iargs)
+                           (dbus-set-property ,@iargs)
+                           (dbus-call-method ,@iargs))
+         ,@forms)))
 
 (cl-defmacro debase-bind (debase-object &rest forms)
   "Bind FORMS so D-Bus methods implicitly target DEBASE-OBJECT.
@@ -37,8 +59,10 @@ path, and interface arguments from DBUS-OBJECT, and don't require them
 to be set.
 
 \(fn (BUS SERVICE PATH &OPTIONAL :INTERFACE INTERFACE) &REST BODY)"
-  (declare (indent 2))
+  (declare (indent 1))
   `(with-slots (bus service path interface) ,debase-object
      (debase-bind* (bus service path interface)
          ,@forms)))
 
+(provide 'debase-bind)
+;;; debase-bind.el ends here
