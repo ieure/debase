@@ -47,7 +47,8 @@ path, from this function's arguments.
     `(debase-flet-partial ((dbus-introspect-xml ,@oargs)
                            (dbus-get-property ,@iargs)
                            (dbus-set-property ,@iargs)
-                           (dbus-call-method ,@iargs))
+                           (dbus-call-method ,@iargs)
+                           (dbus-register-signal ,@iargs))
          ,@forms)))
 
 (cl-defmacro debase-bind (debase-object &rest forms)
