@@ -58,6 +58,9 @@
       (oset this xml (dbus-introspect-xml)))
     (oref this xml)))
 
+(cl-defmethod debase-object-assert-interface ((this debase-object) interface)
+  (cl-assert (member interface (mapcar #'debase-interface-name (debase-object--interfaces this)))))
+
 (cl-defmethod debase-object--interfaces ((this debase-object) &optional interfaces)
   "Return D-Bus interface definitions INTERFACES from XML.
 
