@@ -79,7 +79,7 @@ ex.  FooBARQuux -> foo-bar-quux."
 
 (defun debase-interface-name (interface-def)
   "Return the name of the interface in INTERFACE-DEF XML."
-  (debase--assert xml 'interface)
+  (debase--assert interface-def 'interface)
   (cdr (assoc 'name (dom-attributes interface-def))))
 
 (defun debase--interface (xml interface-name)
