@@ -45,10 +45,11 @@
 
 (cl-defmethod initialize-instance :after ((this debase-object) &rest ignore)
   (with-slots (service) this
-    (unless (slot-boundp this 'path)
-      (oset this path (concat "/" (replace-regexp-in-string "\\." "/" service))))
     (unless (slot-boundp this 'interface)
-      (oset this interface service))))
+      (oset this interface service))
+    (unless (slot-boundp this 'path)
+      (oset this path (concat "/" (replace-regexp-in-string
+                                   "\\." "/" (oref this interface)))))))
 
 (cl-defmethod debase-object--xml ((this debase-object))
   "Return XML representation of D-Bus object THIS."
@@ -80,7 +81,8 @@ If INTERFACES is a list of strings, return interfaces matching them."
 (cl-defmethod debase-object-call-method ((this debase-object) method &rest args)
   "Call METHOD with ARGS on interface THIS."
   (debase-bind this
-    (apply #'dbus-call-method method args)))
+    (if args (apply #'dbus-call-method method args)
+      (funcall #'dbus-call-method method))))
 
 (cl-defmethod debase-object-get ((this debase-object) property)
   "Get value of PROPERTY on interface THIS."
@@ -95,7 +97,8 @@ If INTERFACES is a list of strings, return interfaces matching them."
 (cl-defmethod debase-object-register ((this debase-object) signal handler &rest args)
   "When SIGNAL fires on THIS, invoke HANDLER wtih ARGS. "
   (debase-bind this
-    (apply #'dbus-register-signal signal handler args)))
+    (if args (apply #'dbus-register-signal signal handler args)
+      (funcall #'dbus-register-signal signal handler))))
 
 (provide 'debase-object)
 ;;; debase-object.el ends here
