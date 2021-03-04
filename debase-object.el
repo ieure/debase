@@ -44,6 +44,7 @@
   :documentation "Base class for D-Bus objects.")
 
 (cl-defmethod initialize-instance :after ((this debase-object) &rest ignore)
+  "Initialize `DEBASE-OBJECT' instance THIS, ignoring args IGNORE."
   (with-slots (service) this
     (unless (slot-boundp this 'interface)
       (oset this interface service))
@@ -52,6 +53,9 @@
                                    "\\." "/" (oref this interface)))))))
 
 (cl-defmethod debase-object-target ((this debase-object))
+  "Return the target of `DEBASE-OBJECT' THIS.
+
+Target is a list (BUS SERVICE PATH &OPTIONAL INTERFACE)."
   (with-slots (bus service path interface) this
     (list bus service path interface)))
 
@@ -63,6 +67,7 @@
     (oref this xml)))
 
 (cl-defmethod debase-object-assert-interface ((this debase-object) interface)
+  "Assert that `DEBASE-OBJECT' THIS supports INTERFACE."
   (cl-assert (member interface (mapcar #'debase-interface-name (debase-object--interfaces this)))))
 
 (cl-defmethod debase-object--interfaces ((this debase-object) &optional interfaces)
