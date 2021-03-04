@@ -24,7 +24,7 @@
 
 ;;; Code:
 
-(defclass debase-object* ()
+(defclass debase-object ()
   ((bus :initarg :bus
         :type symbol
         :documentation "Bus the D-Bus service is on.")
@@ -43,21 +43,21 @@
         :documentation "XML representation of the D-Bus object."))
   :documentation "Base class for D-Bus objects.")
 
-(cl-defmethod initialize-instance :after ((this debase-object*) &rest ignore)
+(cl-defmethod initialize-instance :after ((this debase-object) &rest ignore)
   (with-slots (service) this
     (unless (slot-boundp this 'path)
       (oset this path (concat "/" (replace-regexp-in-string "\\." "/" service))))
     (unless (slot-boundp this 'interface)
       (oset this interface service))))
 
-(cl-defmethod debase-object--xml ((this debase-object*))
+(cl-defmethod debase-object--xml ((this debase-object))
   "Return XML representation of D-Bus object THIS."
   (debase-bind this
     (unless (slot-boundp this 'xml)
       (oset this xml (dbus-introspect-xml)))
     (oref this xml)))
 
-(cl-defmethod debase-object--interfaces ((this debase-object*) &optional interfaces)
+(cl-defmethod debase-object--interfaces ((this debase-object) &optional interfaces)
   "Return D-Bus interface definitions INTERFACES from XML.
 
 If INTERFACES is nil, returns all interfaces except those in
@@ -77,22 +77,22 @@ If INTERFACES is a list of strings, return interfaces matching them."
                    (t (not (member (debase-interface-name child) debase--ignore-interfaces))))
              collect child)))
 
-(cl-defmethod debase-object-call-method ((this debase-object*) method &rest args)
+(cl-defmethod debase-object-call-method ((this debase-object) method &rest args)
   "Call METHOD with ARGS on interface THIS."
   (debase-bind this
     (apply #'dbus-call-method method args)))
 
-(cl-defmethod debase-object-get ((this debase-object*) property)
+(cl-defmethod debase-object-get ((this debase-object) property)
   "Get value of PROPERTY on interface THIS."
   (debase-bind this
     (dbus-get-property property)))
 
-(cl-defmethod debase-object-set ((this debase-object*) property value)
+(cl-defmethod debase-object-set ((this debase-object) property value)
   "Set value of PROPERTY to VALUE on interface THIS."
   (debase-bind this
     (dbus-set-property property value)))
 
-(cl-defmethod debase-object-register ((this debase-object*) signal handler &rest args)
+(cl-defmethod debase-object-register ((this debase-object) signal handler &rest args)
   "When SIGNAL fires on THIS, invoke HANDLER wtih ARGS. "
   (debase-bind this
     (apply #'dbus-register-signal signal handler args)))

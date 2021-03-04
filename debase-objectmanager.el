@@ -25,7 +25,7 @@
 ;;; Code:
 
 
-(defclass debase-objectmanager (debase-object*)
+(defclass debase-objectmanager (debase-object)
   ((managed-objects :type cons)
    (-added-signal)
    (-removed-signal))
