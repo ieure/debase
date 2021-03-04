@@ -51,6 +51,10 @@
       (oset this path (concat "/" (replace-regexp-in-string
                                    "\\." "/" (oref this interface)))))))
 
+(cl-defmethod debase-object-target ((this debase-object))
+  (with-slots (bus service path interface) this
+    (list bus service path interface)))
+
 (cl-defmethod debase-object--xml ((this debase-object))
   "Return XML representation of D-Bus object THIS."
   (debase-bind this
