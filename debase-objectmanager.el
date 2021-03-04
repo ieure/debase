@@ -24,33 +24,68 @@
 
 ;;; Code:
 
+(require 'dbus)
+(require 'debase-object)
+
+(defconst debase-objectmanager--interface "org.freedesktop.DBus.ObjectManager"
+  "The D-Bus interface `DEBASE-OBJECTMANAGER' uses.")
 
 (defclass debase-objectmanager (debase-object)
-  ((managed-objects :type cons)
-   (-added-signal)
-   (-removed-signal))
+  ((managed-objects
+    :type cons
+    :documentation "A list of objects this object manages.")
+   (-objectmanager-on-change
+    :initform '()
+    :documentation "A list of hook functions to call when MANAGED-OBJECTS changes.")
+   (-objectmanager-signals
+    :type cons
+    :documentation "D-Bus signals this object has registered."))
   :documentation "A class representing the D-Bus ObjectManager interface.")
 
-(defmethod debase-objectmanager--refresh ((this debase-objectmanager) &rest ignore)
-  "Refresh objects managed by THIS."
-  (with-slots (managed-objects) this
-    (setf managed-objects (debase-object-call-method this "GetManagedObjects"))))
+(defmethod debase-objectmanager-onchange ((this debase-objectmanager) f)
+  "When the state of objects manged by THIS changes, call function F."
+  (with-slots (-objectmanager-on-change) this
+    (add-to-list '-objectmanager-on-change f)))
+
+(defmethod debase-objectmanager--changed ((this debase-objectmanager) &rest ignore)
+  "Refresh objects managed by THIS.
+
+Calls hook functions in -OBJECTMANAGER-ON-CHANGE."
+  (with-slots (managed-objects -objectmanager-on-change) this
+    (setf managed-objects
+          (debase-object-call-method
+           (clone this :interface debase-objectmanager--interface) "GetManagedObjects"))
+    (dolist (f -objectmanager-on-change)
+      (funcall f))))
 
 (defmethod initialize-instance :after ((this debase-objectmanager) &rest ignore)
   "Initialize instance THIS by populating managed objects."
-  (debase-objectmanager--refresh this))
+  (unless (slot-boundp this 'interface)
+    (error "Must target `%s' interface!" debase-objectmanager--interface))
+  (debase-object-assert-interface this debase-objectmanager--interface)
+  (debase-objectmanager--changed this))
 
 (defmethod debase-objectmanager-start ((this debase-objectmanager))
   "Begin listening for updates to managed objects on THIS."
-  (with-slots (-added-signal -removed-signal) this
-    (setf -added-signal (debase-object-register-signal this "InterfacesAdded" 'debase-objectmanager--refresh this)
-          -removed-signal (debase-object-register-signal this "InterfacesRemoved" 'debase-objectmanager--refresh this))))
+  (with-slots (-objectmanager-signals) this
+    (let ((om (clone this :interface debase-objectmanager--interface)))
+      (setf -objectmanager-signals
+            (cl-loop for signal in '("InterfacesAdded" "InterfacesRemoved")
+                     collect (debase-object-register
+                              om signal
+                              (apply-partially #'debase-objectmanager--changed this)))))))
+
+(defmethod debase-objectmanager-started? ((this debase-objectmanager))
+  "Returns non-NIL if ObjectManager THIS is listening for changes."
+  (and (slot-boundp this '-added-signal) (slot-boundp this '-removed-signal)
+       (with-slots (-added-signal -removed-signal) this
+         -added-signal -removed-signal t)))
 
 (defmethod debase-objectmanager-stop ((this debase-objectmanager))
   "Stop listening for updates to managed objects on THIS."
-  (with-slots (-added-signal -removed-signal) this
-    (dolist (signal (list -added-signal -removed-signal))
-      (dbus-unregister-object signal))))
+  (with-slots (-objectmanager-signals) this
+    (mapc #'dbus-unregister-object -objectmanager-signals)
+    (setf -objectmanager-signals nil)))
 
 (provide 'debase-objectmanager)
 ;;; debase-objectmanager.el ends here
