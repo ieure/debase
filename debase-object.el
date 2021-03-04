@@ -38,7 +38,8 @@
               :type string
               :accessor debase-object--interfaces
               :documentation "Interface this object binds to, if any.")
-   (xml :type cons
+   (xml :initarg :xml
+        :type cons
         :accessor debase-object--xml
         :documentation "XML representation of the D-Bus object."))
   :documentation "Base class for D-Bus objects.")
