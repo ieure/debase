@@ -48,10 +48,11 @@
   "Initialize `DEBASE-OBJECT' instance THIS, ignoring args IGNORE."
   (with-slots (service) this
     (unless (slot-boundp this 'interface)
-      (oset this interface service))
+      (ignore-errors (oset this interface service)))
     (unless (slot-boundp this 'path)
-      (oset this path (concat "/" (replace-regexp-in-string
-                                   "\\." "/" (oref this interface)))))))
+      (ignore-errors
+        (oset this path (concat "/" (replace-regexp-in-string
+                                     "\\." "/" (oref this interface))))))))
 
 (cl-defmethod debase-object-target ((this debase-object))
   "Return the target of `DEBASE-OBJECT' THIS.
@@ -62,10 +63,9 @@ Target is a list (BUS SERVICE PATH &OPTIONAL INTERFACE)."
 
 (cl-defmethod debase-object--xml ((this debase-object))
   "Return XML representation of D-Bus object THIS."
-  (debase-bind this
-    (unless (slot-boundp this 'xml)
-      (oset this xml (dbus-introspect-xml)))
-    (oref this xml)))
+  (unless (slot-boundp this 'xml)
+    (oset this xml (debase-bind this (dbus-introspect-xml))))
+  (oref this xml))
 
 (cl-defmethod debase-object-assert-interface ((this debase-object) interface)
   "Assert that `DEBASE-OBJECT' THIS supports INTERFACE."
