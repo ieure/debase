@@ -1,74 +1,108 @@
-# Debase, the DBus<->EIEIO bridge.
+# Debase, the D-Bus convenience layer for Emacs
 
 ![img](sorry.jpg)
 
 D-Bus is an [IPC system](https://en.wikipedia.org/wiki/Inter-process_communication) which is ubiquitous on Linux, and (in this author’s opinion) not very good. Emacs has bindings for interfacing with it (see the former point), which are annoying to use (see the latter point).
 
-These days, numerous common system management tasks are implemented as D-Bus services rather than tradidional \*nix commands, and many of the command-line tools themselves are now front-ends which communicate via D-Bus. Mounting and unmounting disks, monitoring battery status, controlling display brightness, connecting to wireless networks and more are now handled with D-Bus services.
+These days, numerous common system management tasks are implemented as D-Bus services rather than tradidional executables, and many of the command-line tools themselves are now front-ends which communicate via D-Bus. Mounting and unmounting disks, monitoring battery status, controlling display brightness, connecting to wireless networks and more are now handled with D-Bus services.
 
 It makes no sense to shell out to the tools when one could interact with them directly via D-Bus, if only it was less annoying to do so.
 
 Debase frees you from writing repetitive, annoying boilerplate code to drive D-Bus services by throwing another pile of abstraction at the problem, in the form of unreadably dense, macro-heavy, profoundly cursed Lisp.
 
 
-## Usage
+## A crash course in D-Bus
 
-While debase is mildly useful on its own, it’s best used as a base layer for building domain-specific functionality on top of.
+-   Bus. A bus contains services; D-Bus can manage many different busses, but the two standard ones are:
+    -   System bus. This generally has hardware-interfacing and system management services.
+    -   Session bus. This is private to the current session, i.e. a logged-in user.
 
-Debase creates one EIEIO class per D-Bus interface. The interface is discovered using reflection, by examining a particular service and path on a bus.
+-   Services. A service exists on a bus, and is a set of information and operations offered by a program. Example: `org.bluez` on the system bus is the service which manages Bluetooth.
 
-```emacs-lisp
-(require 'debase)
+-   Objects. An object exists within a service, and typically represents a resource it manages. Objects are identified by paths; paths are namespaced under the service. Example: `/org/bluez/hci0/dev_01_23_45_67_89_AB` is the path to an object representing a specific Bluetooth device. Because this is part of the service, that path doesn’t represent anything in a different service, like `org.freedesktop.fwupd`.
 
-(define-debase-interface
-  :system                               ; The bus to define the interface for
-  "org.freedesktop.NetworkManager"      ; D-Bus service to call
-  ;; Path to the D-Bus object
-  "/org/freedesktop/NetworkManager"
-  ;; Interface to define an EIEIO implementation of.
-  ;; Note that nearly every D-Bus object implements multiple interfaces.
-  "org.freedesktop.NetworkManager")
-```
+-   Interfaces. An interface is a view into the capabilities of an object. Objects can (and almost always do) support multiple interfaces. Example: `org.bluez.Device1` is a general interface for managing pairing/unpairing/connecting/disconnecting from Bluetooth devices; `org.bluez.MediaControl1` is an interface for media devices, such as speakers or speakerphones. Since `/org/bluez/hci0/dev_01_23_45_67_89_AB` is a media device, it supports both interfaces.
 
-    db-network-manager
+-   Properties. A property is a value attached to an interface, which exposes information about an object. For example, the `Name` property in the `org.bluez.Device1` interface of `/org/bluez/hci0/dev_01_23_45_67_89_AB` is "Bluetooth Speaker" — the name of the device. Properties can be read/write, read-only, or write-only.
 
-All names are fixed, derived from the D-Bus interface specification, prefixed with `db-` where appropriate, and cannot be specified or changed.
+-   Methods. A method is a remote function call attached to an interface. For example, the `VolumeUp()` method in the `org.bluez.MediaControl1` interface of object `/org/bluez/hci0/dev_01_23_45_67_89_AB` in the `org.bluez` service of the system bus increases the volume of "Bluetooth Speaker." Methods can take arguments and return values.
 
-Even though the `db-network-manager` class is reusable & may be targeted at any D-Bus object, the bus/service/path values from the definition are used as defaults, which is handy for well-known interfaces like UPower, UDisks2, NetworkManager, etc.
+-   Signals. D-Bus enabled applications can generate and respond to signals. A signal represents some kind of event, such as hardware being plugged in or unplugged.
 
-```emacs-lisp
-(setq my/nm (db-network-manager))
-```
+-   Common interfaces. *Most* D-Bus objects support some common interfaces:
+    -   [`org.freedesktop.DBus.Introspectable`](https://dbus.freedesktop.org/doc/dbus-java/api/org/freedesktop/DBus.Introspectable.html). Allows retrieving the schema for the object as XML. It has all the interfaces it supports, as well as their properties and methods.
+    -   [`org.freedesktop.DBus.Peer`](https://dbus.freedesktop.org/doc/dbus-java/api/org/freedesktop/DBus.Peer.html). Provides a `Ping` method.
+    -   [`org.freedesktop.DBus.Properties`](https://dbus.freedesktop.org/doc/dbus-java/api/org/freedesktop/DBus.Properties.html). An interface which exposes object properties, and provides signals so other D-Bus applications receive notifications of changes to them.
+    -   [`org.freedesktop.DBus.ObjectManager`](https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces-objectmanager). Used by D-Bus applications which manage other D-Bus objects. For example, the `org.bluez` service’s `/` object implements `ObjectManager`, which can be used to enumerate connected Bluetooth devices. It also provides signals when managed objects are added or removed.
 
-D-Bus methods are implemented as CL generic methods:
 
-```emacs-lisp
-(db-get-permissions my/nm)
-```
+## Building Blocks FIXME
 
-    (("org.freedesktop.NetworkManager.enable-disable-network" "yes") ("org.freedesktop.NetworkManager.sleep-wake" "no") ("org.freedesktop.NetworkManager.enable-disable-wifi" "yes") ("org.freedesktop.NetworkManager.enable-disable-wwan" "yes") ("org.freedesktop.NetworkManager.enable-disable-wimax" "yes") ("org.freedesktop.NetworkManager.network-control" "yes") ("org.freedesktop.NetworkManager.wifi.share.protected" "yes") ("org.freedesktop.NetworkManager.wifi.share.open" "yes") ("org.freedesktop.NetworkManager.settings.modify.system" "yes") ("org.freedesktop.NetworkManager.settings.modify.own" "yes") ("org.freedesktop.NetworkManager.settings.modify.hostname" "auth") ("org.freedesktop.NetworkManager.settings.modify.global-dns" "auth") ("org.freedesktop.NetworkManager.reload" "auth") ("org.freedesktop.NetworkManager.checkpoint-rollback" "auth") ("org.freedesktop.NetworkManager.enable-disable-statistics" "yes") ("org.freedesktop.NetworkManager.enable-disable-connectivity-check" "yes"))
+Even though Debase makes this easier, many D-Bus methods require additional type wrangling or conversion to be used comfortably. For these cases, you should subclass `DEBASE-OBJECT` and write more specialized methods.
 
-Each D-Bus property has an accessor function with a `db-prop-` prefix.
+If you need to target the same object repeatedly, you can subclass `EIEIO-SINGLETON` as well. Calls to the constructor function will always return the same object.
 
 ```emacs-lisp
-(db-prop-wwan-enabled my/nm)
+(defclass udisks2-block (debase-object) ())
+
+(cl-defmethod initialize-instance :after ((this udisks2-manager) &rest ignore)
+  ;; (with-slots (bus service interface) this
+  ;;   (setf bus :system
+  ;;         service "org.freedesktop.UDisks2"
+  ;;         interface  "org.freedesktop.UDisks2.Block"))
+  )
+
+
+(cl-defmethod udisks2-block-preferred-device ((this udisks2-block))
+  (apply #'str (debase-object-get this "PreferredDevice")))
+
+(let ((block (udisks2-block :path "/org/freedesktop/UDisks2/block_devices/nvme0n1")))
+  (debase-object-target block)
+  ;; (udisks2-block-preferred-device block)
+  )
+
+
 ```
 
-    nil
 
-> **Tip**
-> 
-> The `*Help*` buffer produced with `C-h f db-network-manager RET` lists all available properties and methods.
+### Object Manager
 
-> **Aside for those who know about EIEIO and/or CLOS**
-> 
-> While properties are also slots in the object, do not use `oref` or `slot-value` to access them. They only return the locally cached (possbly unbound) value from the object; the accessor is required to actually fetch the current value from D-Bus.
+Debase provides a `DEBASE-OBJECTMANAGER` class which interacts with the `org.freedesktop.DBus.ObjectManager` interface. It maintains a local cache of managed objects, which is populated on instantiation and automatically updated when one is added or removed.
 
-For properties specified as writable in the D-Bus interface, they’re `setf`-able:
+If a class inherits from it, accessing the `MANAGED-OBJECTS` slot will return the currently managed objects.
+
+It can also dispatch notifications when the list of managed objects changes.
+
+
+## Code Generation (Experimental)
+
+Debase also offers a code generation facility, which turns the XML D-Bus interface descriptions into EIEIO classes. It’s based on `DEBASE-GEN` classes, which are themselves `DEBASE-OBJECT` subclasses, and the `DEBASE-GEN-CODE` generic function.
+
+This code is experimental and subject to changes. Feedback is welcome. I’m not sure it’s useful enough.
+
+Basic example:
 
 ```emacs-lisp
-(setf (db-prop-wwan-enabled my/nm) nil) ; returns the value that was set, nil
-(db-prop-wwan-enabled my/nm)            ; now returns nil
+(thread-first
+    (debase-gen-class :bus :system
+                      :service "org.freedesktop.UDisks2"
+                      :interface "org.freedesktop.UDisks2.Manager"
+                      :class-name udisks2-manager)
+  (debase-gen-code))
 ```
 
-    nil
+
+### Name Mangling
+
+To make generated code more pleasant, `DEBASE-GEN` supports name manglers. These are functions which take a string of a D-Bus name, and return a friendlier one. When generating a class, you can specify a mangler for property, method, and argument names.
+
+```emacs-lisp
+(debase-gen-class :bus :system
+                  :service "org.freedesktop.UDisks2"
+                  :interface "org.freedesktop.UDisks2.Manager"
+                  :class-name udisks2-manager
+                  :property-mangle (lambda (name) (concat "prop-" name))
+                  :method-mangle #'identity)
+```
+
+This will leave method and argument names untouched, and prefix properties with "prop-".
