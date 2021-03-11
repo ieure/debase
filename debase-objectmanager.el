@@ -3,7 +3,10 @@
 ;; Copyright (C) 2021  Ian Eure
 
 ;; Author: Ian Eure <ian@retrospec.tv>
-;; Keywords: comm, hardware
+;; Keywords: lisp, unix
+;; URL: https://github.com/ieure/debase
+;; Version: 0.7
+;; Package-Requires: ((emacs "25.1"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -20,12 +23,12 @@
 
 ;;; Commentary:
 
-;;
+;; DEBASE-OBJECTMANAGER implements the
+;; org.freedesktop.DBus.ObjectManager D-Bus interface.
 
 ;;; Code:
 
-(require 'dbus)
-(require 'debase-object)
+(require 'debase)
 
 (defconst debase-objectmanager--interface "org.freedesktop.DBus.ObjectManager"
   "The D-Bus interface `DEBASE-OBJECTMANAGER' uses.")
@@ -33,10 +36,10 @@
 (defclass debase-objectmanager (debase-object)
   ((managed-objects
     :type cons
-    :documentation "A list of objects this object manages.")
+    :documentation "List of objects this object manages.")
    (-objectmanager-on-change
     :initform '()
-    :documentation "A list of hook functions to call when MANAGED-OBJECTS changes.")
+    :documentation "List of hook functions to call when MANAGED-OBJECTS changes.")
    (-objectmanager-signals
     :type cons
     :documentation "D-Bus signals this object has registered."))

@@ -1,9 +1,12 @@
-;;; debase-gen.el --- Generate D-Bus bindings        -*- lexical-binding: t; -*-
+;;; debase-gen.el --- Debase code generation           -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2020  Ian Eure
+;; Copyright (C) 2019, 2020, 2021  Ian Eure
 
 ;; Author: Ian Eure <ian@retrospec.tv>
-;; Keywords: extensions
+;; Keywords: lisp, unix
+;; URL: https://github.com/ieure/debase
+;; Version: 0.7
+;; Package-Requires: ((emacs "25.1"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -20,120 +23,231 @@
 
 ;;; Commentary:
 
-;; debase-gen generates bindings for D-Bus interfaces.
+;; DEBASE-GEN creates EIEIO classes for D-Bus interfaces.
 
 ;;; Code:
 
-(defun debase--services (bus)
-  "Return a list of all D-Bus services on BUS."
-  (cl-remove-if (lambda (service-name) (= ?: (elt service-name 0)))
-                (dbus-call-method bus "org.freedesktop.DBus" "/" "org.freedesktop.DBus" "ListNames")))
+(require 'debase)
+(require 'eieio)
+(require 'gv)
+(require 'dom)
 
-(defun debase--paths (bus service &optional path)
-  "Return a list of all child objects of PATH paths within SERVICE on BUS."
-  (or (cl-loop for child in (dbus-introspect-get-node-names bus service (or path "/"))
-               append (debase--paths bus service (concat (or path "") "/" child)))
-      (list path)))
+ ;; Base class
 
-(defun debase--interfaces (bus service path)
-  "Return a list of all interfaces supported by D-Bus object at PATH, in SERVICE, on BUS."
-  (dbus-introspect-get-interface-names bus service path))
+(defclass debase-gen (debase-object)
+  ((class-generator
+    :initarg :class-generator
+    :documentation "Reference to the class generator associated with this generator.")
+   (mangle
+    :initarg :mangle :initform #'debase-gen-mangle :type functionp
+    :documentation "A function to produce Lisp names from D-Bus string identifiers."))
+  :abstract t
+  :documentation "Base class for Debase code generation.
 
-(defun debase--interfaces-defs (bus service path)
-  "Return a list of all interfaces supported by D-Bus object at PATH, in SERVICE, on BUS."
-  (debase--object-interfaces (dbus-introspect-xml bus service path) :all))
+Code generation produces an EIEIO class which extends `DEBASE-OBJECT'
+and represents a D-Bus interface.
+")
 
-(defun debase--all-interfaces (bus)
-  "Return information about all interfaces on BUS."
 
-  (cl-loop for service in (-take 2 (debase--services bus))
-           with interfaces = nil
-           do (cl-loop for path in (-take 2 (debase--paths bus service))
-                       do (cl-loop for interface in (debase--interfaces bus service path)
-                                   do (push (list interface bus service path) interfaces)))
-           finally return interfaces))
+ ;; Method generation
 
-(defun debase--complete-bus ()
-  (intern (completing-read "Bus: " '(":system" ":session") nil t ":system")))
+(defclass debase-gen-method (debase-gen)
+  ()
+  :documentation "Class to generate D-Bus methods.")
 
-(defun debase--complete-service (bus)
-  (completing-read "Service: " (debase--services bus) nil t))
+(cl-defmethod debase-gen-method-->arglist ((this debase-gen-method))
+  "Return the CL argument list for `debase-gen-method' THIS."
+  (with-slots (xml mangle) this
+    (cl-loop for child in (dom-non-text-children xml)
+           with i = 0
+           when (eq 'arg (dom-tag child))
+           when (string= "in" (cdr (assoc 'direction (dom-attributes child))))
+           collect (intern (or (funcall mangle (cdr (assoc 'name (dom-attributes child))))
+                               (format "arg%d" i)))
+           do (incf i))))
 
-(defun debase--complete-path (bus service)
-  (completing-read "Path: " (debase--paths bus service) nil t))
+(cl-defmethod initialize-instance :after ((this debase-gen-method) &rest ignore)
+  "Initialize `DEBASE-GEN-METHOD' instance THIS."
+  (with-slots (xml) this (debase--assert xml 'method)))
 
-(defun debase--complete-interface (bus service path)
-  (completing-read "Interface: " (debase--interfaces bus service path) nil t))
+(cl-defmethod debase-gen-code ((this debase-gen-method))
+  "Return generated EIEIO method definition for THIS."
+  (with-slots (class-generator xml mangle) this
+    (with-slots (class-name) class-generator
+      (let ((method-name (funcall mangle (cdr (assoc 'name (dom-attributes xml)))))
+            (args (debase-gen-method-->arglist this)))
+        `(cl-defmethod ,(intern method-name) ((obj ,class-name) ,@args)
+           ,(format "Return the results of calling D-Bus interface \"%s\" method \"%s\" on a `DEBASE-OBJECT' OBJ."
+                    (oref class-generator interface) method-name)
+           (dbus-call-method this ,method-name ,@args))))))
 
-(defun debase--complete ()
-  "Complete a bus, service, object, and interface."
-  (interactive)
-  (let* ((case-fold-search nil)
-         (bus (debase--complete-bus))
-         (service (debase--complete-service bus))
-         (path (debase--complete-path bus service))
-         (interface (debase--complete-interface bus service path)))
-    (list bus service path interface)))
+ ;; Properties: slot definitions
 
-(defun debase--generate (class-name file-name feature-name interface-xml)
-  "Generate class CLASS-NAME for a D-Bus interface INTERFACE-XML."
-  (with-output-to-string
-    (princ (format ";;; %s --- D-Bus bindings -*- lexical-binding: t; -*-
+(defclass debase-gen-slotdef (debase-gen)
+  ()
+  :documentation "Class to generate slot definitions for D-Bus properties.")
 
-;; Copyright (C) %s Ian Eure
+(cl-defmethod initialize-instance :after ((this debase-gen-slotdef) &rest igore)
+  (with-slots (xml) this (debase--assert xml 'property)))
 
-;; Author: %s <%s>
-;; Keywords: extensions
+(cl-defmethod debase-gen-code ((this debase-gen-slotdef))
+  "Return slot definition for property PROPERTY-DEF."
+  (with-slots (xml mangle) this
+    (let ((property-name (cdr (assoc 'name (dom-attributes xml)))))
+      ;; Ignore the prefix for the property name's slot.
+      `(,(intern (funcall mangle property-name))
+        :type ,(debase--type->lisp (cdr (assoc 'type (dom-attributes xml))))
+        ;; But use it for the accessor.
+        :accessor ,(intern (funcall mangle property-name))))))
 
-;; This program is free software; you can redistribute it and/or modify
-;; it under the terms of the GNU General Public License as published by
-;; the Free Software Foundation, either version 3 of the License, or
-;; (at your option) any later version.
+ ;; Properties: accessors
 
-;; This program is distributed in the hope that it will be useful,
-;; but WITHOUT ANY WARRANTY; without even the implied warranty of
-;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-;; GNU General Public License for more details.
+(defclass debase-gen-accessors (debase-gen)
+  ()
+  :documentation "Class to generate D-Bus properties.")
 
-;; You should have received a copy of the GNU General Public License
-;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
+(cl-defmethod initialize-instance :after ((this debase-gen-accessors) &rest igore)
+  (with-slots (xml) this (debase--assert xml 'property)))
 
-;;; Commentary:
+(cl-defmethod debase-gen-accessors--access ((this debase-gen-accessors))
+  "Return the access specification of D-Bus property THIS."
+  (with-slots (xml) this (cdr (assoc 'access (dom-attributes xml)))))
 
-;; This file contains autogenerated bindings for the %s D-Bus interface.
-;;
-;; Do not edit this file!  Extend the classes or override their methods.
+(cl-defmethod debase-gen-accessors--readable? ((this debase-gen-accessors))
+  "Returns non-NIL if property THIS is readable."
+  (member (debase-gen-accessors--access this) '("read" "readwrite")))
 
-;;; Code:
+(cl-defmethod debase-gen-accessors--writeable? ((this debase-gen-accessors))
+  "Returns non-NIL if property THIS is writable."
+  (member (debase-gen-accessors--access this) '("write" "readwrite")))
 
-" file-name 2020 user-full-name
-user-full-name user-mail-address (debase-interface-name interface-xml)))
+(cl-defmethod debase-gen-code ((this debase-gen-accessors))
+  "Return the EIEIO method definition for THIS."
+  (with-slots (xml mangle class-generator) this
+    (with-slots (class-name) class-generator
+    (let* ((helpers)
+           (property-name (cdr (assoc 'name (dom-attributes xml))))
+           (accessor (intern (funcall mangle property-name))))
+      (when (debase-gen-accessors--writeable? this)
+        ;; Clear the setter, if there is one, otherwise `gv-setter' complains.
+        (put accessor 'gv-expander nil)
+        (thread-first
+            `(gv-define-setter ,accessor (val obj)
+               (backquote (with-slots (bus service path interface) ,',obj
+                            (dbus-set-property bus service path interface ,property-name ,',val)
+                            (oset ,',obj ,accessor ,',val))))
+          (push helpers)))
 
-    (mapc (lambda (elt)
-            (pp elt)
-            (princ "\n"))
-          (debase-interface->class*
-           (make-symbol class-name)
-           interface-xml
-           :prefix (concat class-name "-")))
+      (thread-first
+          `(cl-defmethod ,accessor ((this ,class-name))
+             ,(if (debase-gen-accessors--readable? this)
+                  `(with-slots (bus service path interface) this
+                     (dbus-get-property bus service path interface
+                                        ,property-name))
+                `(error "Property `%s' isn't readable" ,property-name)))
+        (push helpers))
+      helpers))))
 
-    (princ (format "(provide '%s)
-;;; %s ends here
-" feature-name file-name))
-    ))
 
-(defun debase-generate (bus service path interface class-name)
-  "Generate and insert classes for a D-Bus interface."
-  (interactive (let ((bus-service-path-interface (debase--complete)))
-                 (append bus-service-path-interface (list (read-string "Class name: " (debase--interface->name (car (last bus-service-path-interface))))))))
+ ;; Classes
 
-  (with-output-to-temp-buffer (format "*debase %s*" interface)
-    (princ (debase--generate
-            class-name
-            (concat class-name ".el")
-            class-name
-            (debase--interface (dbus-introspect-xml bus service path) interface)))))
+(defun debase-gen-class--properties (interface-def)
+  "Return properties for D-Bus interface INTERFACE-DEF."
+  (debase--assert interface-def 'interface)
+  (thread-first (lambda (child) (eq 'property (dom-tag child)))
+    (cl-remove-if-not (dom-non-text-children interface-def))))
 
+(defun debase-gen-class--methods (interface-def)
+  "Return methods for D-Bus interface INTERFACE-DEF."
+  (debase--assert interface-def 'interface)
+  (thread-first (lambda (child) (eq 'method (dom-tag child)))
+    (cl-remove-if-not (dom-non-text-children interface-def))))
+
+(defclass debase-gen-class (debase-gen)
+  ((class-name :initarg :class-name
+               :type symbol
+               :documentation "Name of the class to generate.")
+   (slotdef-generator
+    :initform #'debase-gen-slotdef
+    :documentation "Constructor for class to generate slot definitions for properties.")
+   (accessors-generator
+    :initform #'debase-gen-accessors
+    :documentation "Constructor for class to generate accessors for properties.")
+   (property-mangle
+    :initarg :property-mangle
+    :documentation "A function to mangle property names.  Passed
+    to SLOTDEF-GENERATOR and ACCESSORS-GENERATPR.  Defaults to
+    the value of the MANGLE slot.")
+
+   (method-generator
+    :initform #'debase-gen-method
+    :documentation "Constructor for class to generate methods.")
+   (method-mangle
+    :initarg :method-mangle
+    :documentation "A function to mangle method names.  Defaults to the value of the MANGLE slot."))
+
+  :documentation "A class which generates other classes.")
+
+(cl-defmethod initialize-instance :after ((this debase-gen-class) &rest args)
+  (unless (and (slot-boundp this 'class-name) (slot-value this 'class-name))
+    (error "Must specify :CLASS-NAME"))
+  (unless (and (slot-boundp this 'interface) (slot-value this 'interface))
+    (error "Must specify :INTERFACE"))
+
+  (with-slots (interface mangle) this
+    (debase-object-assert-interface this interface)
+    (unless (slot-boundp this 'property-mangle)
+      (oset this property-mangle mangle))
+    (unless (slot-boundp this 'method-mangle)
+      (oset this method-mangle mangle))))
+
+(cl-defmethod debase-gen-code ((this debase-gen-class))
+  "Return definition of an EIEIO class to interface with D-Bus.
+
+The return value is an expression for an EIEIO class, its generic
+methods, and property accessors."
+  (with-slots (interface property-mangle slotdef-generator accessors-generator
+                         method-generator method-mangle) this
+    (let* ((interface-def (car (debase-object--interfaces this interface)))
+           (slotdef-generators
+            (mapcar (lambda (xml) (funcall slotdef-generator :class-generator this
+                                           :mangle property-mangle :xml xml))
+                    (debase-gen-class--properties interface-def)))
+
+           (accessors-generators
+            (mapcar (lambda (xml) (funcall accessors-generator :class-generator this
+                                           :mangle property-mangle :xml xml))
+                    (debase-gen-class--properties interface-def)))
+
+           (method-generators
+            (mapcar (lambda (xml) (funcall method-generator :class-generator this
+                                           :mangle method-mangle :xml xml))
+                    (debase-gen-class--methods interface-def))))
+      (with-slots (class-name) this
+        `(prog1
+             (defclass ,class-name (debase-object)
+               ,(mapcar #'debase-gen-code slotdef-generators)
+               :documentation ,(format "Debase interface class for D-Bus interface \"%s\"" interface))
+
+           ;; Each generator returns a list of accessors, because
+           ;; properties may have readers and writers.  Append all the
+           ;; results together.
+           ,@(apply #'append (mapcar #'debase-gen-code accessors-generators))
+           ,@(mapcar #'debase-gen-code method-generators))))))
+
+
+ ;; Name mangling
+
+(defun debase-gen-mangle (dbus-name)
+  "Mangles DBUS-NAME into something Lispier.
+
+ex.  FooBARQuux -> foo-bar-quux."
+  (let ((case-fold-search))
+    (downcase (replace-regexp-in-string "\\([a-z]\\)\\([A-Z]\\)" "\\1-\\2" dbus-name))))
+
+(cl-defun debase-gen-mangle-prefix (prefix dbus-name)
+  "Mangle DBUS-NAME by adding PREFIX to it."
+  (concat prefix dbus-name))
 
 (provide 'debase-gen)
 ;;; debase-gen.el ends here

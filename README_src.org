@@ -1,6 +1,6 @@
 #+OPTIONS: toc:nil author:nil title:nil
 
-* Debase, the DBus<->EIEIO bridge.
+* Debase, the D-Bus convenience layer for Emacs
   :PROPERTIES:
   :ID:       2055fdfe-f336-4c8c-b238-978bfe84d09c
   :END:
@@ -14,7 +14,7 @@
   latter point).
 
   These days, numerous common system management tasks are implemented
-  as D-Bus services rather than tradidional *nix commands, and many of
+  as D-Bus services rather than tradidional executables, and many of
   the command-line tools themselves are now front-ends which
   communicate via D-Bus.  Mounting and unmounting disks, monitoring
   battery status, controlling display brightness, connecting to
@@ -66,8 +66,8 @@
      which exposes information about an object.  For example, the
      =Name= property in the =org.bluez.Device1= interface of
      =/org/bluez/hci0/dev_01_23_45_67_89_AB= is "Bluetooth Speaker" —
-     the name of the device.  The interface can define them as being
-     read-only, read/write, or write-only.
+     the name of the device.  Properties can be read/write, read-only,
+     or write-only.
 
    - Methods.  A method is a remote function call attached to an
      interface.  For example, the =VolumeUp()= method in the
@@ -76,178 +76,212 @@
      service of the system bus increases the volume of "Bluetooth
      Speaker."  Methods can take arguments and return values.
 
+   - Signals.  D-Bus enabled applications can generate and respond to
+     signals.  A signal represents some kind of event, such as
+     hardware being plugged in or unplugged.
 
-** Debase’s abstractions
+   - Common interfaces.  /Most/ D-Bus objects support some common
+     interfaces:
+
+     - [[https://dbus.freedesktop.org/doc/dbus-java/api/org/freedesktop/DBus.Introspectable.html][=org.freedesktop.DBus.Introspectable=]].  Allows retrieving the
+       schema for the object as XML.  It has all the interfaces it
+       supports, as well as their properties and methods.
+     - [[https://dbus.freedesktop.org/doc/dbus-java/api/org/freedesktop/DBus.Peer.html][=org.freedesktop.DBus.Peer=]].  Provides a =Ping= method.
+     - [[https://dbus.freedesktop.org/doc/dbus-java/api/org/freedesktop/DBus.Properties.html][=org.freedesktop.DBus.Properties=]].  An interface which exposes
+       object properties, and provides signals so other D-Bus
+       applications receive notifications of changes to them.
+     - [[https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces-objectmanager][=org.freedesktop.DBus.ObjectManager=]].  Used by D-Bus
+       applications which manage other D-Bus objects.  For example,
+       the =org.bluez= service’s =/= object implements
+       =ObjectManager=, which can be used to enumerate connected
+       Bluetooth devices.  It also provides signals when managed
+       objects are added or removed.
+
+
+** COMMENT Debase Objects
    :PROPERTIES:
    :ID:       a7ea0d8e-9923-4cd8-9d15-0e69158fda85
    :END:
 
-   Debase is focused on D-Bus objects, and makes no attempt to model
-   busses or services.
+   Debase defines a =DEBASE-OBJECT= EIEIO base class, which stores a
+   bus, service, path, and (optionally) an interface.
 
-   Debase uses EIEIO to create proxy classes which represent D-Bus
-   interfaces.  These are generic, and reused for any object needing
-   that interface.  These all inherit from =debase--dbus=.
+   #+BEGIN_SRC emacs-lisp :eval never
+     (setf upower (debase-object :bus :system
+                                 :service "org.freedesktop.UPower"
+                                 :path "/org/freedesktop/UPower"
+                                 :interface "org.freedesktop.UPower"))
+   #+END_SRC
 
-   Proxy classes are solely concerned with interfaces, thus they have
-   no information about a specific object or what service/bus/path it
-   might exist under.
+   Since many D-Bus objects use identical (or readily computable)
+   values for service, path, and interface, you may omit the path
+   and/or interface, and Debase will fill them in with reasonable
+   values.  The =DEBASE-TARGET= function will return these values,
+   in case you want to see how an object is set up.
 
-   Objects inherit from =debase--dbus-object= and one or more proxy
-   classes.
+   #+BEGIN_SRC emacs-lisp :results value verbatim :exports both
+     (debase-object-target
+      (debase-object :bus :system :service "org.freedesktop.UPower"))
+   #+END_SRC
 
-   Properties are represented by slots, with getters/setters; D-Bus
-   methods are generic functions.
+   #+RESULTS:
+   : (:system "org.freedesktop.UPower" "/org/freedesktop/UPower" "org.freedesktop.UPower")
 
-   Do not attempt to use slot values directly; use the accessors.
-   Accessors have the form =debase-prop-NAME=, where =NAME= is a
-   sanitized version of the D-Bus property name.
+   #+BEGIN_SRC emacs-lisp :results value verbatim
+     (debase-object-target
+      (debase-object :bus :system
+                     :service "org.freedesktop.UDisks2"
+                     :interface "org.freedesktop.UDisks2.Manager"))
+   #+END_SRC
 
-   Accessors are =setf=-able, if the D-Bus property is writeable.
-
-   Specific D-Bus objects are represented by instances of a wrapper
-   class which defines the bus, service, and object path, and inherits
-   from the EIEIO classes which comprise all its interfaces.
+   #+RESULTS:
+   : (:system "org.freedesktop.UDisks2" "/org/freedesktop/UDisks2/Manager" "org.freedesktop.UDisks2.Manager")
 
 
-** Usage
+   Debase also defines generic functions which mirror the built-in
+   ones, but target the D-Bus object represented by =DEBASE-OBJECT=.
+   Instead of slogging through a dozen lengthy variations of:
+
+   #+BEGIN_SRC emacs-lisp :results value verbatim
+     (list
+      (dbus-get-property :system "org.freedesktop.UDisks2" "/org/freedesktop/UDisks2/Manager" "org.freedesktop.UDisks2.Manager" "Version")
+      (dbus-get-property :system "org.freedesktop.UDisks2" "/org/freedesktop/UDisks2/Manager" "org.freedesktop.UDisks2.Manager" "SupportedFilesystems"))
+   #+END_SRC
+
+   #+RESULTS:
+   : ("2.8.1" ("ext2" "ext3" "ext4" "vfat" "ntfs" "exfat" "xfs" "reiserfs" "nilfs2" "btrfs" "minix" "udf" "f2fs" "swap"))
+
+   You can set a single object and use it over and over:
+
+   #+BEGIN_SRC emacs-lisp :results value verbatim
+     (let ((udisks2-manager (debase-object :bus :system
+                                           :service "org.freedesktop.UDisks2"
+                                           :interface "org.freedesktop.UDisks2.Manager")))
+       (list (debase-object-get udisks2-manager "Version")
+             (debase-object-get udisks2-manager "SupportedFilesystems")))
+
+   #+END_SRC
+
+   #+RESULTS:
+   : ("2.8.1" ("ext2" "ext3" "ext4" "vfat" "ntfs" "exfat" "xfs" "reiserfs" "nilfs2" "btrfs" "minix" "udf" "f2fs" "swap"))
+
+
+*** COMMENT FIXME
+    :PROPERTIES:
+    :ID:       ff136236-e61e-4b73-85e9-1ffdb42e547b
+    :END:
+    When you need to target a different interface of the same object,
+    =CLONE= is your friend.
+
+    #+BEGIN_SRC emacs-lisp :results value verbatim
+      (let (()))
+    #+END_SRC
+
+
+** Building Blocks FIXME
    :PROPERTIES:
-   :ID:       95dd1bd2-b4ed-4b0d-baef-206ea6d5a3d7
+   :ID:       6f38ce0d-f488-4ceb-aab2-771e83b2428d
    :END:
 
-   Debase is a base layer for building domain-specific functionality.
-   It generates the code that handles most of the D-Bus rigamarole,
-   which you can build on top of.
+   Even though Debase makes this easier, many D-Bus methods require
+   additional type wrangling or conversion to be used comfortably.
+   For these cases, you should subclass =DEBASE-OBJECT= and write more
+   specialized methods.
+
+   If you need to target the same object repeatedly, you can subclass
+   =EIEIO-SINGLETON= as well.  Calls to the constructor function will
+   always return the same object.
+
+   #+BEGIN_SRC emacs-lisp :results value verbatim
+     (defclass udisks2-block (debase-object) ())
+
+     (cl-defmethod initialize-instance :after ((this udisks2-manager) &rest ignore)
+       ;; (with-slots (bus service interface) this
+       ;;   (setf bus :system
+       ;;         service "org.freedesktop.UDisks2"
+       ;;         interface  "org.freedesktop.UDisks2.Block"))
+       )
 
 
-*** Classes
+     (cl-defmethod udisks2-block-preferred-device ((this udisks2-block))
+       (apply #'str (debase-object-get this "PreferredDevice")))
+
+     (let ((block (udisks2-block :path "/org/freedesktop/UDisks2/block_devices/nvme0n1")))
+       (debase-object-target block)
+       ;; (udisks2-block-preferred-device block)
+       )
+
+
+   #+END_SRC
+
+   #+RESULTS:
+   : ("2.8.1" ("ext2" "ext3" "ext4" "vfat" "ntfs" "exfat" "xfs" "reiserfs" "nilfs2" "btrfs" "minix" "udf" "f2fs" "swap"))
+
+*** Object Manager
     :PROPERTIES:
-    :ID:       864cd662-cb9f-40e5-bbc6-d16127910ad6
+    :ID:       a55f476b-ed6a-4498-a4be-964cea6d2f29
     :END:
 
-    Debase creates one class per D-Bus interface, along with support
-    functions for managing its properties and calling functions on
-    it.  These are called /interface classes/.
+    Debase provides a =DEBASE-OBJECTMANAGER= class which interacts
+    with the =org.freedesktop.DBus.ObjectManager= interface.  It
+    maintains a local cache of managed objects, which is populated on
+    instantiation and automatically updated when one is added or
+    removed.
 
-    To represent a specific D-Bus object, a new class is defined,
-    which inherits the classes corresponding to all the object’s
-    interfaces.  This is called a /composite class/.
+    If a class inherits from it, accessing the =MANAGED-OBJECTS= slot
+    will return the currently managed objects.
 
-    Classes are easily defined using a =:SPEC=, which is a list of
-    =(BUS SERVICE PATH)=; Debase uses reflection to discover the
-    interfaces and generate code:
-
-    #+BEGIN_SRC emacs-lisp :session usage-1 :eval always :exports both :results value verbatim
-      (require 'debase)
-
-      (debase-define-class network-manager
-        :spec (:system "org.freedesktop.NetworkManager" "/org/freedesktop/NetworkManager")
-
-        ;; The generic methods will all get this prefix.  If unspecified,
-        ;; "debase-" is used.
-        :prefix "nm-")
-    #+END_SRC
-
-    #+RESULTS:
-    : network-manager
-
-    Even though the =network-manager= class is reusable & may be
-    targeted at any D-Bus object, the bus/service/path values from
-    =:SPEC= are used as defaults, which is handy for well-known
-    interfaces like UPower, UDisks2, NetworkManager, etc.
-
-    Creating an instance is as easy as calling the constructor:
-
-    #+BEGIN_SRC emacs-lisp :session usage-1 :eval always :exports code
-      (setq my/nm (network-manager))
-    #+END_SRC
-
-    #+RESULTS:
-    : #s(#s(eieio--class network-manager "Debase composite class, representing an object with the following interfaces:
-    :
-    :  - org.freedesktop.NetworkManager" (#s(eieio--class debase--dbus-object "Base class for D-Bus objects." nil [#s(cl-slot-descriptor bus unbound symbol ((:documentation . "Bus the D-Bus service is on."))) #s(cl-slot-descriptor service unbound string ((:documentation . "D-Bus service."))) #s(cl-slot-descriptor path unbound string ((:documentation . "Path to D-Bus object."))) #s(cl-slot-descriptor interfaces unbound list ((:documentation . "Interfaces this object implements.")))] #s(hash-table size 65 test eq rehash-size 1.5 rehash-threshold 0.8125 data (bus 0 service 1 path 2 interfaces 3)) (network-manager udisks2-manager udisks2--base udisks2-manager-base debase-composite--debase--dbus-object&debase-udisks2-manager68 debase-composite--debase--dbus-object&debase-udisks2-manager67 debase-composite--debase--dbus-object&debase-udisks2-manager66 debase-composite--debase--dbus-object&debase-udisks2-manager65) ((:bus . bus) (:service . service) (:path . path)) [] [] #s(#3 unbound unbound unbound unbound) (:custom-groups nil :abstract t :documentation "Base class for D-Bus objects.")) #s(eieio--class nm-network-manager "Debase class corresponding to D-Bus interface \"org.freedesktop.NetworkManager\"" (#s(eieio--class debase--dbus "Base class for D-Bus interface classes." nil [#s(cl-slot-descriptor interface unbound string ((:documentation . "D-Bus interface this class implements.")))] #s(hash-table size 65 test eq rehash-size 1.5 rehash-threshold 0.8125 data (interface 0)) (nm-network-manager debase-network-manager udisks2-udisks2-manager udisks2-manager-base debase929 debase928 debase927 debase925 debase-org\.freedesktop\.UDisks2924 debase-dbus-peer debase-dbus-introspectable debase-dbus-properties udisks2-manager udisks2--base-udisks2-manager debase-udisks2-manager) nil [] [] #s(#5 unbound) (:custom-groups nil :abstract t :documentation "Base class for D-Bus interface classes."))) [#s(cl-slot-descriptor interface "org.freedesktop.NetworkManager" string ((:documentation . "D-Bus interface this class implements."))) #s(cl-slot-descriptor debase-devices unbound t nil) #s(cl-slot-descriptor debase-all-devices unbound t nil) #s(cl-slot-descriptor debase-checkpoints unbound t nil) #s(cl-slot-descriptor debase-networking-enabled unbound t nil) #s(cl-slot-descriptor debase-wireless-enabled unbound t nil) #s(cl-slot-descriptor debase-wireless-hardware-enabled unbound t nil) #s(cl-slot-descriptor debase-wwan-enabled unbound t nil) #s(cl-slot-descriptor debase-wwan-hardware-enabled unbound t nil) #s(cl-slot-descriptor debase-wimax-enabled unbound t nil) #s(cl-slot-descriptor debase-wimax-hardware-enabled unbound t nil) #s(cl-slot-descriptor debase-active-connections unbound t nil) #s(cl-slot-descriptor debase-primary-connection unbound t nil) #s(cl-slot-descriptor debase-primary-connection-type unbound t nil) #s(cl-slot-descriptor debase-metered unbound t nil) #s(cl-slot-descriptor debase-activating-connection unbound t nil) #s(cl-slot-descriptor debase-startup unbound t nil) #s(cl-slot-descriptor debase-version unbound t nil) #s(cl-slot-descriptor debase-capabilities unbound t nil) #s(cl-slot-descriptor debase-state unbound t nil) #s(cl-slot-descriptor debase-connectivity unbound t nil) #s(cl-slot-descriptor debase-connectivity-check-available unbound t nil) #s(cl-slot-descriptor debase-connectivity-check-enabled unbound t nil) #s(cl-slot-descriptor debase-global-dns-configuration unbound t nil)] #s(hash-table size 65 test eq rehash-size 1.5 rehash-threshold 0.8125 data (interface 0 debase-devices 1 debase-all-devices 2 debase-checkpoints 3 debase-networking-enabled 4 debase-wireless-enabled 5 debase-wireless-hardware-enabled 6 debase-wwan-enabled 7 debase-wwan-hardware-enabled 8 debase-wimax-enabled 9 debase-wimax-hardware-enabled 10 debase-active-connections 11 debase-primary-connection 12 debase-primary-connection-type 13 debase-metered 14 debase-activating-connection 15 debase-startup 16 debase-version 17 debase-capabilities 18 debase-state 19 debase-connectivity 20 debase-connectivity-check-available 21 debase-connectivity-check-enabled 22 debase-global-dns-configuration 23)) (network-manager) nil [] [] #s(#3 "org.freedesktop.NetworkManager" unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound) (:custom-groups nil :abstract t :documentation "Debase class corresponding to D-Bus interface \"org.freedesktop.NetworkManager\""))) [#s(cl-slot-descriptor bus :system symbol ((:documentation . "Bus the D-Bus service is on."))) #s(cl-slot-descriptor service "org.freedesktop.NetworkManager" string ((:documentation . "D-Bus service."))) #s(cl-slot-descriptor path "/org/freedesktop/NetworkManager" string ((:documentation . "Path to D-Bus object."))) #s(cl-slot-descriptor interfaces ("org.freedesktop.NetworkManager") list ((:documentation . "Interfaces this object implements."))) #s(cl-slot-descriptor interface "org.freedesktop.NetworkManager" string ((:documentation . "D-Bus interface this class implements."))) #s(cl-slot-descriptor debase-devices unbound t nil) #s(cl-slot-descriptor debase-all-devices unbound t nil) #s(cl-slot-descriptor debase-checkpoints unbound t nil) #s(cl-slot-descriptor debase-networking-enabled unbound t nil) #s(cl-slot-descriptor debase-wireless-enabled unbound t nil) #s(cl-slot-descriptor debase-wireless-hardware-enabled unbound t nil) #s(cl-slot-descriptor debase-wwan-enabled unbound t nil) #s(cl-slot-descriptor debase-wwan-hardware-enabled unbound t nil) #s(cl-slot-descriptor debase-wimax-enabled unbound t nil) #s(cl-slot-descriptor debase-wimax-hardware-enabled unbound t nil) #s(cl-slot-descriptor debase-active-connections unbound t nil) #s(cl-slot-descriptor debase-primary-connection unbound t nil) #s(cl-slot-descriptor debase-primary-connection-type unbound t nil) #s(cl-slot-descriptor debase-metered unbound t nil) #s(cl-slot-descriptor debase-activating-connection unbound t nil) #s(cl-slot-descriptor debase-startup unbound t nil) #s(cl-slot-descriptor debase-version unbound t nil) #s(cl-slot-descriptor debase-capabilities unbound t nil) #s(cl-slot-descriptor debase-state unbound t nil) #s(cl-slot-descriptor debase-connectivity unbound t nil) #s(cl-slot-descriptor debase-connectivity-check-available unbound t nil) #s(cl-slot-descriptor debase-connectivity-check-enabled unbound t nil) #s(cl-slot-descriptor debase-global-dns-configuration unbound t nil)] #s(hash-table size 65 test eq rehash-size 1.5 rehash-threshold 0.8125 data (bus 0 service 1 path 2 interfaces 3 interface 4 debase-devices 5 debase-all-devices 6 debase-checkpoints 7 debase-networking-enabled 8 debase-wireless-enabled 9 debase-wireless-hardware-enabled 10 debase-wwan-enabled 11 debase-wwan-hardware-enabled 12 debase-wimax-enabled 13 debase-wimax-hardware-enabled 14 debase-active-connections 15 debase-primary-connection 16 debase-primary-connection-type 17 debase-metered 18 debase-activating-connection 19 debase-startup 20 debase-version 21 debase-capabilities 22 debase-state 23 debase-connectivity 24 debase-connectivity-check-available 25 debase-connectivity-check-enabled 26 debase-global-dns-configuration 27)) nil ((:bus . bus) (:service . service) (:path . path)) [] [] #s(#1 :system "org.freedesktop.NetworkManager" "/org/freedesktop/NetworkManager" ("org.freedesktop.NetworkManager") "org.freedesktop.NetworkManager" unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound) (:custom-groups nil :documentation "Debase composite class, representing an object with the following interfaces:
-    :
-    :  - org.freedesktop.NetworkManager")) :system "org.freedesktop.NetworkManager" "/org/freedesktop/NetworkManager" ("org.freedesktop.NetworkManager") "org.freedesktop.NetworkManager" unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound unbound)
+    It can also dispatch notifications when the list of managed
+    objects changes.
 
 
-    #+BEGIN_QUOTE
-    *Tip*
-
-    The =*Help*= buffer produced with =C-h f network-manager RET=
-    lists all available properties and methods.
-    #+END_QUOTE
-
-    #+BEGIN_QUOTE
-
-
-*** Naming
-    :PROPERTIES:
-    :ID:       a7ac32d2-186f-4850-9034-801c6f294ca5
-    :END:
-
-    The name of the composite class is always explicitly provided.
-
-    The names of the interface classes and their methods are always
-    generated, based on the D-Bus interface name and =:PREFIX= keyword
-    argument.
-
-    Names of properties are also generated, except they have =-prop-=
-    inserted between the prefix and D-Bus name.
-
-
-*** Methods
-    :PROPERTIES:
-    :ID:       aa5cae9e-eb5f-4849-a5dd-24332253cb1b
-    :END:
-
-    D-Bus methods are implemented as Lisp generic methods, specialized
-    to the interface class.
-
-    #+BEGIN_SRC emacs-lisp :session usage-1 :eval always :exports both :results value verbatim
-      (nm-get-permissions my/nm)
-    #+END_SRC
-
-    #+RESULTS:
-    : (("org.freedesktop.NetworkManager.enable-disable-network" "yes") ("org.freedesktop.NetworkManager.sleep-wake" "no") ("org.freedesktop.NetworkManager.enable-disable-wifi" "yes") ("org.freedesktop.NetworkManager.enable-disable-wwan" "yes") ("org.freedesktop.NetworkManager.enable-disable-wimax" "yes") ("org.freedesktop.NetworkManager.network-control" "yes") ("org.freedesktop.NetworkManager.wifi.share.protected" "yes") ("org.freedesktop.NetworkManager.wifi.share.open" "yes") ("org.freedesktop.NetworkManager.settings.modify.system" "yes") ("org.freedesktop.NetworkManager.settings.modify.own" "yes") ("org.freedesktop.NetworkManager.settings.modify.hostname" "auth") ("org.freedesktop.NetworkManager.settings.modify.global-dns" "auth") ("org.freedesktop.NetworkManager.reload" "auth") ("org.freedesktop.NetworkManager.checkpoint-rollback" "auth") ("org.freedesktop.NetworkManager.enable-disable-statistics" "yes") ("org.freedesktop.NetworkManager.enable-disable-connectivity-check" "yes"))
-
-
-*** Properties
-    :PROPERTIES:
-    :ID:       23d18dde-2372-478b-9418-f8986f5e0ba3
-    :END:
-
-    Each D-Bus property has an accessor function with a =nm-prop-=
-    prefix.
-
-    #+BEGIN_SRC emacs-lisp :session usage-1 :eval always :exports both :results value verbatim
-      (nm-prop-wwan-enabled my/nm)
-    #+END_SRC
-
-    #+RESULTS:
-    : t
-
-    For properties specified as writable in the D-Bus interface,
-    they’re =setf=-able:
-
-    #+BEGIN_SRC emacs-lisp :session usage-1 :eval always :exports both :results value verbatim
-      (setf (nm-prop-wwan-enabled my/nm) nil) ; returns the value that was set, nil
-      (nm-prop-wwan-enabled my/nm)            ; now returns nil
-    #+END_SRC
-
-    #+RESULTS:
-    : nil
-
-    *Warning for those who know about EIEIO and/or CLOS*
-
-    While properties are also slots in the object, do not use =oref=
-    or =slot-value= to access them.  This will only return the local
-    value of the object, which may be unbound.  The accessor function
-    is required to actually fetch the current value from D-Bus.
-
-
-** Building
+** Code Generation (Experimental)
    :PROPERTIES:
-   :ID:       a58e6392-5371-4ff6-adfd-2db6ffb5feae
+   :ID:       3a84fa53-e074-457e-8ac7-bb75b7ab7703
    :END:
 
-   Many D-Bus interfaces have
+   Debase also offers a code generation facility, which turns the XML
+   D-Bus interface descriptions into EIEIO classes.  It’s based on
+   =DEBASE-GEN= classes, which are themselves =DEBASE-OBJECT=
+   subclasses, and the =DEBASE-GEN-CODE= generic function.
+
+   This code is experimental and subject to changes.  Feedback is
+   welcome.  I’m not sure it’s useful enough.
+
+
+   Basic example:
+
+   #+BEGIN_SRC emacs-lisp :results value verbatim
+     (thread-first
+         (debase-gen-class :bus :system
+                           :service "org.freedesktop.UDisks2"
+                           :interface "org.freedesktop.UDisks2.Manager"
+                           :class-name udisks2-manager)
+       (debase-gen-code))
+   #+END_SRC
+
+   #+RESULTS:
+   : (prog1 (defclass udisks2-manager (debase-object) ((version :type string :accessor version) (supported-filesystems :type t :accessor supported-filesystems)) :documentation "Debase interface class for D-Bus interface \"org.freedesktop.UDisks2.Manager\"") (cl-defmethod version ((this udisks2-manager)) (with-slots (bus service path interface) this (dbus-get-property bus service path interface "Version"))) (cl-defmethod supported-filesystems ((this udisks2-manager)) (with-slots (bus service path interface) this (dbus-get-property bus service path interface "SupportedFilesystems"))) (cl-defmethod can-format ((obj udisks2-manager) type) "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"can-format\" on a `DEBASE-OBJECT' OBJ." (dbus-call-method this "can-format" type)) (cl-defmethod can-resize ((obj udisks2-manager) type) "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"can-resize\" on a `DEBASE-OBJECT' OBJ." (dbus-call-method this "can-resize" type)) (cl-defmethod can-check ((obj udisks2-manager) type) "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"can-check\" on a `DEBASE-OBJECT' OBJ." (dbus-call-method this "can-check" type)) (cl-defmethod can-repair ((obj udisks2-manager) type) "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"can-repair\" on a `DEBASE-OBJECT' OBJ." (dbus-call-method this "can-repair" type)) (cl-defmethod loop-setup ((obj udisks2-manager) fd options) "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"loop-setup\" on a `DEBASE-OBJECT' OBJ." (dbus-call-method this "loop-setup" fd options)) (cl-defmethod mdraid-create ((obj udisks2-manager) blocks level name chunk options) "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"mdraid-create\" on a `DEBASE-OBJECT' OBJ." (dbus-call-method this "mdraid-create" blocks level name chunk options)) (cl-defmethod enable-modules ((obj udisks2-manager) enable) "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"enable-modules\" on a `DEBASE-OBJECT' OBJ." (dbus-call-method this "enable-modules" enable)) (cl-defmethod get-block-devices ((obj udisks2-manager) options) "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"get-block-devices\" on a `DEBASE-OBJECT' OBJ." (dbus-call-method this "get-block-devices" options)) (cl-defmethod resolve-device ((obj udisks2-manager) devspec options) "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"resolve-device\" on a `DEBASE-OBJECT' OBJ." (dbus-call-method this "resolve-device" devspec options)))
+
+
+*** Name Mangling
+    :PROPERTIES:
+    :ID:       2975089a-7802-45fd-ac2f-f63b65c2d9cc
+    :END:
+
+    To make generated code more pleasant, =DEBASE-GEN= supports name
+    manglers.  These are functions which take a string of a D-Bus
+    name, and return a friendlier one.  When generating a class, you
+    can specify a mangler for property, method, and argument names.
+
+    #+BEGIN_SRC emacs-lisp
+      (debase-gen-class :bus :system
+                        :service "org.freedesktop.UDisks2"
+                        :interface "org.freedesktop.UDisks2.Manager"
+                        :class-name udisks2-manager
+                        :property-mangle (lambda (name) (concat "prop-" name))
+                        :method-mangle #'identity)
+    #+END_SRC
+
+    This will leave method and argument names untouched, and prefix
+    properties with "prop-".
