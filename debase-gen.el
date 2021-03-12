@@ -81,6 +81,7 @@ and represents a D-Bus interface.
                     (oref class-generator interface) method-name)
            (dbus-call-method this ,method-name ,@args))))))
 
+
  ;; Properties: slot definitions
 
 (defclass debase-gen-slotdef (debase-gen)
@@ -99,6 +100,7 @@ and represents a D-Bus interface.
         :type ,(debase--type->lisp (cdr (assoc 'type (dom-attributes xml))))
         ;; But use it for the accessor.
         :accessor ,(intern (funcall mangle property-name))))))
+
 
  ;; Properties: accessors
 
@@ -245,9 +247,10 @@ ex.  FooBARQuux -> foo-bar-quux."
   (let ((case-fold-search))
     (downcase (replace-regexp-in-string "\\([a-z]\\)\\([A-Z]\\)" "\\1-\\2" dbus-name))))
 
-(cl-defun debase-gen-mangle-prefix (prefix dbus-name)
-  "Mangle DBUS-NAME by adding PREFIX to it."
-  (concat prefix dbus-name))
+(cl-defun debase-gen-mangle-prefix (prefix)
+  "Return a function that mangles a dbus name by adding PREFIX to it."
+  (lambda (dbus-name)
+    (concat prefix dbus-name)))
 
 (provide 'debase-gen)
 ;;; debase-gen.el ends here
