@@ -36,32 +36,25 @@ Debase frees you from writing repetitive, annoying boilerplate code to drive D-B
     -   [`org.freedesktop.DBus.ObjectManager`](https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces-objectmanager). Used by D-Bus applications which manage other D-Bus objects. For example, the `org.bluez` service’s `/` object implements `ObjectManager`, which can be used to enumerate connected Bluetooth devices. It also provides signals when managed objects are added or removed.
 
 
-## Building Blocks FIXME
+## Building Blocks
 
 Even though Debase makes this easier, many D-Bus methods require additional type wrangling or conversion to be used comfortably. For these cases, you should subclass `DEBASE-OBJECT` and write more specialized methods.
-
-If you need to target the same object repeatedly, you can subclass `EIEIO-SINGLETON` as well. Calls to the constructor function will always return the same object.
 
 ```emacs-lisp
 (defclass udisks2-block (debase-object) ())
 
-(cl-defmethod initialize-instance :after ((this udisks2-manager) &rest ignore)
-  ;; (with-slots (bus service interface) this
-  ;;   (setf bus :system
-  ;;         service "org.freedesktop.UDisks2"
-  ;;         interface  "org.freedesktop.UDisks2.Block"))
-  )
-
+(cl-defmethod initialize-instance :after ((this udisks2-block) &rest ignore)
+  (with-slots (bus service interface) this
+    (setf bus :system
+          service "org.freedesktop.UDisks2"
+          interface  "org.freedesktop.UDisks2.Block")))
 
 (cl-defmethod udisks2-block-preferred-device ((this udisks2-block))
-  (apply #'str (debase-object-get this "PreferredDevice")))
+  "Returns the preferred device for `UDISKS2-BLOCK' object THIS."
+  (substring (apply #'string (debase-object-get this "Device")) 0 -1))
 
-(let ((block (udisks2-block :path "/org/freedesktop/UDisks2/block_devices/nvme0n1")))
-  (debase-object-target block)
-  ;; (udisks2-block-preferred-device block)
-  )
-
-
+(let ((block (udisks2-block :path "/org/freedesktop/UDisks2/block_devices/sda1")))
+  (udisks2-block-preferred-device block))
 ```
 
 
@@ -76,9 +69,11 @@ It can also dispatch notifications when the list of managed objects changes.
 
 ## Code Generation (Experimental)
 
-Debase also offers a code generation facility, which turns the XML D-Bus interface descriptions into EIEIO classes. It’s based on `DEBASE-GEN` classes, which are themselves `DEBASE-OBJECT` subclasses, and the `DEBASE-GEN-CODE` generic function.
+Debase also offers a code generation facility, which turns the XML D-Bus interface descriptions into EIEIO classes. The intent is to eliminate the drudgery of building the code that interacts with D-Bus, so you can focus on making it actually do interesting things.
 
-This code is experimental and subject to changes. Feedback is welcome. I’m not sure it’s useful enough.
+This is an experimental feature, and while I think it might be a good idea, I’ve struggled with usability for actual projects. Feedback and/or code welcomed.
+
+Codegen is implemented as EIEIO classes itself. Different parts of the output (the class itself, methods, slot accessors) are separate classes which extend `DEBASE-GEN`. All classes provide a `DEBASE-GEN-CODE` generic function which produce the output.
 
 Basic example:
 
@@ -91,10 +86,66 @@ Basic example:
   (debase-gen-code))
 ```
 
+Prettyprinted output:
+
+```emacs-lisp
+(prog1
+    (defclass udisks2-manager (debase-object)
+      ((version :type string :accessor version)
+       (supported-filesystems :type t :accessor supported-filesystems))
+      :documentation "Debase interface class for D-Bus interface \"org.freedesktop.UDisks2.Manager\"")
+
+  (cl-defmethod version ((this udisks2-manager))
+    (with-slots (bus service path interface) this
+      (dbus-get-property bus service path interface "Version")))
+
+  (cl-defmethod supported-filesystems ((this udisks2-manager))
+    (with-slots (bus service path interface) this
+      (dbus-get-property bus service path interface "SupportedFilesystems")))
+
+  (cl-defmethod can-format ((obj udisks2-manager) type)
+    "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"can-format\" on a `DEBASE-OBJECT' OBJ."
+    (dbus-call-method this "can-format" type))
+
+  (cl-defmethod can-resize ((obj udisks2-manager) type)
+    "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"can-resize\" on a `DEBASE-OBJECT' OBJ."
+    (dbus-call-method this "can-resize" type))
+
+  (cl-defmethod can-check ((obj udisks2-manager) type)
+    "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"can-check\" on a `DEBASE-OBJECT' OBJ."
+    (dbus-call-method this "can-check" type))
+
+  (cl-defmethod can-repair ((obj udisks2-manager) type)
+    "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"can-repair\" on a `DEBASE-OBJECT' OBJ."
+    (dbus-call-method this "can-repair" type))
+
+  (cl-defmethod loop-setup ((obj udisks2-manager) fd options)
+    "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"loop-setup\" on a `DEBASE-OBJECT' OBJ."
+    (dbus-call-method this "loop-setup" fd options))
+
+  (cl-defmethod mdraid-create ((obj udisks2-manager) blocks level name chunk options)
+    "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"mdraid-create\" on a `DEBASE-OBJECT' OBJ."
+    (dbus-call-method this "mdraid-create" blocks level name chunk options))
+
+  (cl-defmethod enable-modules ((obj udisks2-manager) enable)
+    "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"enable-modules\" on a `DEBASE-OBJECT' OBJ."
+    (dbus-call-method this "enable-modules" enable))
+
+  (cl-defmethod get-block-devices ((obj udisks2-manager) options)
+    "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"get-block-devices\" on a `DEBASE-OBJECT' OBJ."
+    (dbus-call-method this "get-block-devices" options))
+
+  (cl-defmethod resolve-device ((obj udisks2-manager) devspec options)
+    "Return the results of calling D-Bus interface \"org.freedesktop.UDisks2.Manager\" method \"resolve-device\" on a `DEBASE-OBJECT' OBJ."
+    (dbus-call-method this "resolve-device" devspec options)))
+```
+
+Correctly represe
+
 
 ### Name Mangling
 
-To make generated code more pleasant, `DEBASE-GEN` supports name manglers. These are functions which take a string of a D-Bus name, and return a friendlier one. When generating a class, you can specify a mangler for property, method, and argument names.
+To make generated code more pleasant, `DEBASE-GEN` mangles D-Bus names into ones that are Lispier. The default is `DEBASE-GEN-MANGLE`, but you can supply your own functions for properties, methods, and argument names.
 
 ```emacs-lisp
 (debase-gen-class :bus :system
@@ -106,3 +157,10 @@ To make generated code more pleasant, `DEBASE-GEN` supports name manglers. These
 ```
 
 This will leave method and argument names untouched, and prefix properties with "prop-".
+
+
+### Multiple Inheritance
+
+Fully representing a D-Bus object with EIEIO classes means generating one class for each interface it has, then creating a new class which inherits from all of them.
+
+I haven’t found a nice way of making this easy yet, so you’re on your own.
