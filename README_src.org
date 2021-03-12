@@ -323,7 +323,6 @@
          (dbus-call-method this "resolve-device" devspec options)))
    #+END_SRC
 
-   Correctly represe
 
 *** Name Mangling
     :PROPERTIES:

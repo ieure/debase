@@ -140,8 +140,6 @@ Prettyprinted output:
     (dbus-call-method this "resolve-device" devspec options)))
 ```
 
-Correctly represe
-
 
 ### Name Mangling
 
